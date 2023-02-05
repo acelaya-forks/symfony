@@ -12,9 +12,10 @@
 namespace Symfony\Component\Cache\Traits;
 
 use Predis\Command\Redis\UNLINK;
-use Predis\Connection\Aggregate\ClusterInterface;
-use Predis\Connection\Aggregate\RedisCluster;
-use Predis\Connection\Aggregate\ReplicationInterface;
+use Predis\Connection\Aggregate\ClusterInterface as PredisV1ClusterInterface;
+use Predis\Connection\Aggregate\RedisCluster as PredisV1RedisCluster;
+use Predis\Connection\Aggregate\ReplicationInterface as PredisV1ReplicationInterface;
+use Predis\Connection\Replication\ReplicationInterface as PredisV2ReplicationInterface;
 use Predis\Response\ErrorInterface;
 use Predis\Response\Status;
 use Relay\Relay;
@@ -376,7 +377,7 @@ trait RedisTrait
 
         $result = [];
 
-        if ($this->redis instanceof \Predis\ClientInterface && $this->redis->getConnection() instanceof ClusterInterface) {
+        if ($this->redis instanceof \Predis\ClientInterface && $this->redis->getConnection() instanceof PredisV1ClusterInterface) {
             $values = $this->pipeline(function () use ($ids) {
                 foreach ($ids as $id) {
                     yield 'get' => [$id];
@@ -414,12 +415,7 @@ trait RedisTrait
         }
 
         $cleared = true;
-        $hosts = $this->getHosts();
-        $host = reset($hosts);
-        if ($host instanceof \Predis\Client && $host->getConnection() instanceof ReplicationInterface) {
-            // Predis supports info command only on the master in replication environments
-            $hosts = [$host->getClientFor('master')];
-        }
+        $hosts = $this->resolveHostsToClear();
 
         foreach ($hosts as $host) {
             if (!isset($namespace[0])) {
@@ -470,13 +466,30 @@ trait RedisTrait
         return $cleared;
     }
 
+    private function resolveHostsToClear(): array
+    {
+        $hosts = $this->getHosts();
+        $host = reset($hosts);
+        if (!$host instanceof \Predis\Client) {
+            return $hosts;
+        }
+
+        $connection = $host->getConnection();
+        return match (true) {
+            // Predis supports info command only on the master in replication environments
+            $connection instanceof PredisV1ReplicationInterface => [$host->getClientFor('master')],
+            $connection instanceof PredisV2ReplicationInterface => [$host->getClientBy('role', 'master')],
+            default => $hosts,
+        };
+    }
+
     protected function doDelete(array $ids): bool
     {
         if (!$ids) {
             return true;
         }
 
-        if ($this->redis instanceof \Predis\ClientInterface && $this->redis->getConnection() instanceof ClusterInterface) {
+        if ($this->redis instanceof \Predis\ClientInterface && $this->redis->getConnection() instanceof PredisV1ClusterInterface) {
             static $del;
             $del ??= (class_exists(UNLINK::class) ? 'unlink' : 'del');
 
@@ -534,7 +547,7 @@ trait RedisTrait
         $ids = [];
         $redis ??= $this->redis;
 
-        if ($redis instanceof \RedisCluster || ($redis instanceof \Predis\ClientInterface && $redis->getConnection() instanceof RedisCluster)) {
+        if ($redis instanceof \RedisCluster || ($redis instanceof \Predis\ClientInterface && $redis->getConnection() instanceof PredisV1RedisCluster)) {
             // phpredis & predis don't support pipelining with RedisCluster
             // see https://github.com/phpredis/phpredis/blob/develop/cluster.markdown#pipelining
             // see https://github.com/nrk/predis/issues/267#issuecomment-123781423
@@ -596,7 +609,7 @@ trait RedisTrait
         $hosts = [$this->redis];
         if ($this->redis instanceof \Predis\ClientInterface) {
             $connection = $this->redis->getConnection();
-            if ($connection instanceof ClusterInterface && $connection instanceof \Traversable) {
+            if ($connection instanceof PredisV1ClusterInterface && $connection instanceof \Traversable) {
                 $hosts = [];
                 foreach ($connection as $c) {
                     $hosts[] = new \Predis\Client($c);
