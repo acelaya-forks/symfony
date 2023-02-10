@@ -15,6 +15,8 @@ use Predis\Command\Redis\UNLINK;
 use Predis\Connection\Aggregate\ClusterInterface as PredisV1ClusterInterface;
 use Predis\Connection\Aggregate\RedisCluster as PredisV1RedisCluster;
 use Predis\Connection\Aggregate\ReplicationInterface as PredisV1ReplicationInterface;
+use Predis\Connection\Cluster\ClusterInterface as PredisV2ClusterInterface;
+use Predis\Connection\Cluster\RedisCluster as PredisV2RedisCluster;
 use Predis\Connection\Replication\ReplicationInterface as PredisV2ReplicationInterface;
 use Predis\Response\ErrorInterface;
 use Predis\Response\Status;
@@ -376,8 +378,12 @@ trait RedisTrait
         }
 
         $result = [];
+        $isPredisCluster = $this->redis instanceof \Predis\ClientInterface && (
+            $this->redis->getConnection() instanceof PredisV1ClusterInterface
+            || $this->redis->getConnection() instanceof PredisV2ClusterInterface
+        );
 
-        if ($this->redis instanceof \Predis\ClientInterface && $this->redis->getConnection() instanceof PredisV1ClusterInterface) {
+        if ($isPredisCluster) {
             $values = $this->pipeline(function () use ($ids) {
                 foreach ($ids as $id) {
                     yield 'get' => [$id];
@@ -489,7 +495,12 @@ trait RedisTrait
             return true;
         }
 
-        if ($this->redis instanceof \Predis\ClientInterface && $this->redis->getConnection() instanceof PredisV1ClusterInterface) {
+        $isPredisCluster = $this->redis instanceof \Predis\ClientInterface && (
+            $this->redis->getConnection() instanceof PredisV1ClusterInterface
+            || $this->redis->getConnection() instanceof PredisV2ClusterInterface
+        );
+
+        if ($isPredisCluster) {
             static $del;
             $del ??= (class_exists(UNLINK::class) ? 'unlink' : 'del');
 
@@ -546,8 +557,12 @@ trait RedisTrait
     {
         $ids = [];
         $redis ??= $this->redis;
+        $isPredisCluster = $redis instanceof \Predis\ClientInterface && (
+            $redis->getConnection() instanceof PredisV1RedisCluster
+            || $redis->getConnection() instanceof PredisV2RedisCluster
+        );
 
-        if ($redis instanceof \RedisCluster || ($redis instanceof \Predis\ClientInterface && $redis->getConnection() instanceof PredisV1RedisCluster)) {
+        if ($redis instanceof \RedisCluster || $isPredisCluster) {
             // phpredis & predis don't support pipelining with RedisCluster
             // see https://github.com/phpredis/phpredis/blob/develop/cluster.markdown#pipelining
             // see https://github.com/nrk/predis/issues/267#issuecomment-123781423
@@ -609,7 +624,12 @@ trait RedisTrait
         $hosts = [$this->redis];
         if ($this->redis instanceof \Predis\ClientInterface) {
             $connection = $this->redis->getConnection();
-            if ($connection instanceof PredisV1ClusterInterface && $connection instanceof \Traversable) {
+            $isTraversableCluster = $connection instanceof \Traversable && (
+                $connection instanceof PredisV1ClusterInterface
+                || $connection instanceof PredisV2ClusterInterface
+            );
+
+            if ($isTraversableCluster) {
                 $hosts = [];
                 foreach ($connection as $c) {
                     $hosts[] = new \Predis\Client($c);
