@@ -378,12 +378,8 @@ trait RedisTrait
         }
 
         $result = [];
-        $isPredisCluster = $this->redis instanceof \Predis\ClientInterface && (
-            $this->redis->getConnection() instanceof PredisV1ClusterInterface
-            || $this->redis->getConnection() instanceof PredisV2ClusterInterface
-        );
 
-        if ($isPredisCluster) {
+        if ($this->isPredisCluster()) {
             $values = $this->pipeline(function () use ($ids) {
                 foreach ($ids as $id) {
                     yield 'get' => [$id];
@@ -495,12 +491,7 @@ trait RedisTrait
             return true;
         }
 
-        $isPredisCluster = $this->redis instanceof \Predis\ClientInterface && (
-            $this->redis->getConnection() instanceof PredisV1ClusterInterface
-            || $this->redis->getConnection() instanceof PredisV2ClusterInterface
-        );
-
-        if ($isPredisCluster) {
+        if ($this->isPredisCluster()) {
             static $del;
             $del ??= (class_exists(UNLINK::class) ? 'unlink' : 'del');
 
@@ -557,10 +548,7 @@ trait RedisTrait
     {
         $ids = [];
         $redis ??= $this->redis;
-        $isPredisCluster = $redis instanceof \Predis\ClientInterface && (
-            $redis->getConnection() instanceof PredisV1RedisCluster
-            || $redis->getConnection() instanceof PredisV2RedisCluster
-        );
+        $isPredisCluster = $this->isPredisCluster($redis);
 
         if ($redis instanceof \RedisCluster || $isPredisCluster) {
             // phpredis & predis don't support pipelining with RedisCluster
@@ -648,5 +636,14 @@ trait RedisTrait
         }
 
         return $hosts;
+    }
+
+    private function isPredisCluster(object $redis = null): bool
+    {
+        $redis ??= $this->redis;
+        return $redis instanceof \Predis\ClientInterface && (
+            $redis->getConnection() instanceof PredisV1ClusterInterface
+            || $redis->getConnection() instanceof PredisV2ClusterInterface
+        );
     }
 }
